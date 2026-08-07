@@ -1,0 +1,22 @@
+{
+  "name": "m8t",
+  "description": "Talk to deployed virtual workers in Microsoft Agent Foundry from a Claude Code session.",
+  "version": "0.1.96",
+  "author": {
+    "name": "Or Keren",
+    "url": "https://github.com/m8t-labs"
+  },
+  "homepage": "https://github.com/m8t-labs/m8t-releases",
+  "repository": "https://github.com/m8t-labs/m8t-releases",
+  "license": "MIT",
+  "keywords": [
+    "m8t",
+    "microsoft-foundry",
+    "virtual-workers",
+    "azure",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "commands": "./commands/",
+  "mcpServers": "./.mcp.json"
+}

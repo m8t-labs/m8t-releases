@@ -1,0 +1,15 @@
+{
+  "name": "m8t",
+  "owner": {
+    "name": "Or Keren",
+    "url": "https://github.com/m8t-labs"
+  },
+  "plugins": [
+    {
+      "name": "m8t",
+      "description": "Talk to deployed virtual workers in Microsoft Agent Foundry from a Claude Code session. Provides dynamic per-worker slash commands (/carolyn, /dan, ...) with role hints and an @<name> free-text routing skill, backed by a local MCP server.",
+      "source": "./plugins/m8t",
+      "homepage": "https://github.com/m8t-labs/m8t-releases"
+    }
+  ]
+}
