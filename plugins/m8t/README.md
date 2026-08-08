@@ -40,21 +40,39 @@ the next rebuild silently *regresses* it (a backwards version breaks
 (`scripts/maybe-bump-plugin-version.mjs --check`) asserts on **every PR** that
 `.claude-plugin/plugin.json` equals `server/package.json`, so a manual manifest
 edit — or a `package.json` bump that wasn't rebuilt — fails the PR.
-(`src/version.test.ts` mirrors the same assertion, but the `server/` suite is
-outside the pnpm workspace and so does **not** run in the workspace CI — the gate
-is the enforcing check.) To force a refresh of an installed copy regardless of
+(`src/version.test.ts` mirrors the same assertion; the `server/` suite is a
+workspace package, so it runs under `turbo run test` alongside everything else.)
+To force a refresh of an installed copy regardless of
 version: `claude plugin uninstall m8t@m8t && claude plugin install m8t@m8t`.
 
-The MCP server (`server/`) is a standalone plugin — it is **not** part of the
-pnpm workspace. Installing its deps requires `pnpm install --ignore-workspace`
-from `plugins/m8t/server/` (a plain `pnpm install` there runs in workspace
-scope and misbehaves).
+The MCP server (`server/`) **is** a workspace package (`pnpm-workspace.yaml`
+lists `plugins/m8t/server`), so a plain `pnpm install` at the repository root
+installs its dev dependencies along with everything else. There is nothing to
+install inside `server/` and no separate lockfile — an earlier note here
+described a `pnpm install --ignore-workspace` workflow that had stopped being
+either true or necessary.
 
-The server bundles via **tsup** (`pnpm build` → a single `dist/index.js`). It
-inlines the pure `@m8t-stack/agent-ledger` core from source via a build-time
-esbuild alias — nothing about the ledger appears in the server's
-`package.json`/lockfile/consumer install. The runtime dep `@azure/data-tables`
-is explicit in `package.json` and covers the agent-ledger writes.
+The server bundles via **tsup** (`pnpm build` → a single `dist/index.js`), and
+that one file is the **whole program**: every non-builtin is inlined, including
+the seven npm runtime dependencies. It has to be. The plugin is distributed as
+committed files with no install step, `server/node_modules` is gitignored, and
+nothing ever created one on a consumer's machine — so while the dependencies
+were left external the shipped server died on its first import with
+`ERR_MODULE_NOT_FOUND`, on every clean profile, in silence. It only ever ran on
+a machine that happened to have run a workspace install.
+
+Consequences worth knowing before changing the build:
+
+- **A dependency bump changes what ships.** `dist/index.js` moves when the
+  lockfile does, with no source edit — which is why the version guard treats the
+  shipped file, and every file the mirror publishes, as a trigger.
+- **No sourcemap.** Bundling vendor code takes it to ~11 MB, Node reads it only
+  under `--enable-source-maps`, and it would be republished in full into the
+  public repository founders clone. The bundle stays unminified instead, so a
+  stack frame still names a readable location.
+- **`scripts/check-plugin-boot.mjs` is the check that matters.** It lays out the
+  mirrored file set somewhere with no `node_modules` reachable and speaks MCP to
+  the server. Nothing else in CI runs the artifact.
 
 `pnpm typecheck` resolves `@m8t-stack/agent-ledger` via `tsconfig.json` `paths`
 to that package's **built** declarations (`packages/agent-ledger/dist/esm/index.d.ts`)

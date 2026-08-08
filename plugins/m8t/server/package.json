@@ -1,6 +1,6 @@
 {
   "name": "@m8t/mcp-server",
-  "version": "0.1.96",
+  "version": "0.1.99",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
