@@ -101966,7 +101966,8 @@ function parseBrainLink(metadata2) {
       schemaVersion: typeof obj.schemaVersion === "string" && obj.schemaVersion ? obj.schemaVersion : "1",
       credentialRef: typeof obj.credentialRef === "string" ? obj.credentialRef : "",
       ...typeof obj.installationId === "string" ? { installationId: obj.installationId } : {},
-      ...typeof obj.instanceFolder === "string" ? { instanceFolder: obj.instanceFolder } : {}
+      ...typeof obj.instanceFolder === "string" ? { instanceFolder: obj.instanceFolder } : {},
+      ...obj.transport === "gateway-mcp-v1" || obj.transport === "github-mcp" ? { transport: obj.transport } : {}
     };
   } catch {
     return void 0;
@@ -104024,29 +104025,45 @@ function readAppSecrets(args) {
 // ../../../packages/github-app-auth/src/cache.ts
 var EXPIRY_SAFETY_MS = 10 * 60 * 1e3;
 var cache2 = /* @__PURE__ */ new Map();
-function key(installationId, repository) {
-  return `${installationId}:${repository}`;
+function canonicalPermissions(permissions) {
+  if (permissions === void 0) return "<installation-defaults>";
+  return JSON.stringify(
+    Object.fromEntries(
+      Object.entries(permissions).sort(([left], [right]) => left.localeCompare(right))
+    )
+  );
 }
-function getCachedToken(installationId, repository) {
-  const e = cache2.get(key(installationId, repository));
+function key(installationId, repository, permissions) {
+  return `${installationId}:${repository}:${canonicalPermissions(permissions)}`;
+}
+function getCachedToken(installationId, repository, permissions) {
+  const e = cache2.get(key(installationId, repository, permissions));
   if (!e) return null;
   if (e.expiresAt.getTime() - Date.now() <= EXPIRY_SAFETY_MS) return null;
   return e;
 }
-function putCachedToken(installationId, repository, token, expiresAt) {
-  cache2.set(key(installationId, repository), { token, expiresAt });
+function putCachedToken(installationId, repository, token, expiresAt, permissions, result) {
+  cache2.set(key(installationId, repository, permissions), {
+    token,
+    expiresAt,
+    ...result?.permissions ? { permissions: { ...result.permissions } } : {},
+    ...result?.repositorySelection ? { repositorySelection: result.repositorySelection } : {}
+  });
 }
 
 // ../../../packages/github-app-auth/src/mint.ts
 async function mintInstallationToken(args) {
-  const cached2 = getCachedToken(args.installationId, args.repository);
+  const cached2 = getCachedToken(
+    args.installationId,
+    args.repository,
+    args.permissions
+  );
   if (cached2) {
     return {
       token: cached2.token,
       expiresAt: cached2.expiresAt,
-      permissions: {},
-      // not tracked in cache; callers usually don't need it on hit
-      repositorySelection: "selected"
+      permissions: cached2.permissions ?? { ...args.permissions ?? {} },
+      repositorySelection: cached2.repositorySelection ?? "selected"
     };
   }
   const { appId, privateKeyPem } = await readAppSecrets({
@@ -104079,7 +104096,17 @@ ${text.slice(0, 500)}`
   }
   const parsed = JSON.parse(text);
   const expiresAt = new Date(parsed.expires_at);
-  putCachedToken(args.installationId, args.repository, parsed.token, expiresAt);
+  putCachedToken(
+    args.installationId,
+    args.repository,
+    parsed.token,
+    expiresAt,
+    args.permissions,
+    {
+      permissions: parsed.permissions,
+      repositorySelection: parsed.repository_selection
+    }
+  );
   return {
     token: parsed.token,
     expiresAt,
@@ -114235,13 +114262,84 @@ function makeRowKey(timestampIso, eventId) {
   return `${String(reverse).padStart(19, "0")}_${eventId}`;
 }
 
+// ../../../packages/agent-ledger/src/pii.ts
+import { createHmac as createHmac6 } from "crypto";
+var EMAIL_PLACEHOLDER = "[email]";
+var PHONE_PLACEHOLDER = "[phone]";
+var SECRET_PLACEHOLDER = "[secret]";
+var PEM_BLOCK_RE = /-----BEGIN [A-Z0-9 ]{0,32}PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]{0,32}PRIVATE KEY-----/g;
+var JWT_RE = /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{6,}(?:\.[A-Za-z0-9_-]{10,})?/g;
+var HTTP_CREDENTIAL_RE = /\b(Bearer|Basic)[ \t]+(?=[A-Za-z0-9._~+/=-]{0,80}[0-9+/=])[A-Za-z0-9._~+/=-]{16,}/gi;
+var KNOWN_PREFIX_RE = /(?<![A-Za-z0-9_-])(?:sk-[A-Za-z0-9_-]{16,}|rk-[A-Za-z0-9_-]{16,}|xox[a-z]-[A-Za-z0-9-]{10,}|gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{28,}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|ya29\.[A-Za-z0-9_-]{20,}|dckr_pat_[A-Za-z0-9_-]{20,}|shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32,})(?![A-Za-z0-9_-])/g;
+var KEYED_VALUE = `("[^"\\n]{8,}"|'[^'\\n]{8,}'|(?=[A-Za-z0-9+/=_.~%-]{0,64}[0-9+/=])[A-Za-z0-9+/=_.~%-]{8,})`;
+var KEYED_STRONG_SECRET_RE = new RegExp(
+  `(?<![A-Za-z0-9])(shared[_-]?access[_-]?key|account[_-]?key|access[_-]?key|storage[_-]?key|api[_-]?key|apikey|x[_-]?api[_-]?key|client[_-]?secret|sas[_-]?token|access[_-]?token|refresh[_-]?token|auth[_-]?token|id[_-]?token|bot[_-]?token|private[_-]?key|password|passwd|pwd)(["']?\\s*[:=]\\s*)("[^"\\n]{8,}"|'[^'\\n]{8,}'|[A-Za-z0-9+/=_.~%-]{8,})`,
+  "gi"
+);
+var KEYED_WEAK_SECRET_RE = new RegExp(
+  `(?<![A-Za-z0-9])(authorization|secret|token|sig)(["']?\\s*[:=]\\s*)` + KEYED_VALUE,
+  "gi"
+);
+var TELEGRAM_BOT_TOKEN_RE = /(?<!\d)\d{8,10}:AA[A-Za-z0-9_-]{32,34}(?![A-Za-z0-9_-])/g;
+var SPOKEN_SECRET_RE = /\b((?:password|passcode|passphrase|api[ _-]?key|access code|pin(?: code)?)\s+is[ \t:]+)(?=\S{0,32}[0-9])\S{4,64}/gi;
+var SPOKEN_PASSWORD_RE = /\b((?:password|passcode|passphrase)\s+is[ \t:]+)(?!\[)(?!(?:wrong|incorrect|invalid|expired|required|missing|reset|unchanged|correct|secure|weak|strong|blank|empty|not|now|still|too|the|already|also|only|just|being|getting)\b)("[^"\n]{4,64}"|'[^'\n]{4,64}'|\S{4,64})/gi;
+var B64ISH_RE = /(?<![A-Za-z0-9+=_-])(?=[A-Za-z0-9+=_-]{0,64}[A-Z])(?=[A-Za-z0-9+=_-]{0,64}[a-z])(?=[A-Za-z0-9+=_-]{0,64}[0-9])[A-Za-z0-9+=_-]{40,}(?![A-Za-z0-9+=_-])/g;
+var EMAIL_RE = new RegExp("[\\p{L}\\p{N}._%+-]+@[\\p{L}\\p{N}](?:[\\p{L}\\p{N}.-]*[\\p{L}\\p{N}])?\\.\\p{L}{2,}(?![\\p{L}\\p{N}-])", "gu");
+var PHONE_INTL_RE = /(?<![\d/.-])\+\d{1,3}(?:[ .-]?\(\d{1,4}\))?(?:[ .-]?\d){6,12}(?!\d)/g;
+var PHONE_SEP_RE = /(?<![\d.-])(?:\d[ .-])?(?:\(\d{3}\)[ .-]?\d{3}[ .-]?\d{4}|\d{3}[ .-]\d{3}[ .-]\d{4}|0\d{1,2}[ .-]\d{7})(?![\d-])/g;
+var PHONE_CONTEXT_RE = /\b((?:call|text|dial|whatsapp)(?:\s+(?:me|us|him|her|them|back))?(?:\s+(?:at|on))?\s*[:-]?\s*|(?:phone|mobile|cell|tel)(?:\s*(?:number|no\.?))?\s*(?:is|:)?\s*)(?<![\d.(-])\d{7,15}(?![\d.])/gi;
+var PEM_OPEN_RE = /-----BEGIN [A-Z0-9 ]{0,32}PRIVATE KEY-----/;
+var UNCLOSED_QUOTED_SECRET_RE = /(?<![A-Za-z0-9])(?:shared[_-]?access[_-]?key|account[_-]?key|access[_-]?key|storage[_-]?key|api[_-]?key|apikey|x[_-]?api[_-]?key|client[_-]?secret|sas[_-]?token|access[_-]?token|refresh[_-]?token|auth[_-]?token|id[_-]?token|bot[_-]?token|private[_-]?key|password|passwd|pwd|authorization|secret|token|sig)["']?\s*[:=]\s*["'][^"'\n]*$/i;
+function failClosedOnCutConstructs(text) {
+  const pem = PEM_OPEN_RE.exec(text);
+  if (pem && !/-----END [A-Z0-9 ]{0,32}PRIVATE KEY-----/.test(text.slice(pem.index))) {
+    return text.slice(0, pem.index) + SECRET_PLACEHOLDER;
+  }
+  const quoted = UNCLOSED_QUOTED_SECRET_RE.exec(text);
+  if (quoted) return text.slice(0, quoted.index) + SECRET_PLACEHOLDER;
+  return text;
+}
+function maskSecrets(text) {
+  const masked = text.replace(PEM_BLOCK_RE, SECRET_PLACEHOLDER).replace(JWT_RE, SECRET_PLACEHOLDER).replace(HTTP_CREDENTIAL_RE, (_, scheme) => `${scheme} ${SECRET_PLACEHOLDER}`).replace(KNOWN_PREFIX_RE, SECRET_PLACEHOLDER).replace(TELEGRAM_BOT_TOKEN_RE, SECRET_PLACEHOLDER).replace(KEYED_STRONG_SECRET_RE, (_, key2, sep3) => `${key2}${sep3}${SECRET_PLACEHOLDER}`).replace(KEYED_WEAK_SECRET_RE, (_, key2, sep3) => `${key2}${sep3}${SECRET_PLACEHOLDER}`).replace(SPOKEN_SECRET_RE, (_, lead) => `${lead}${SECRET_PLACEHOLDER}`).replace(SPOKEN_PASSWORD_RE, (_, lead) => `${lead}${SECRET_PLACEHOLDER}`).replace(B64ISH_RE, SECRET_PLACEHOLDER);
+  return failClosedOnCutConstructs(masked);
+}
+function maskContact(text) {
+  return text.replace(EMAIL_RE, EMAIL_PLACEHOLDER).replace(PHONE_INTL_RE, PHONE_PLACEHOLDER).replace(PHONE_SEP_RE, PHONE_PLACEHOLDER).replace(PHONE_CONTEXT_RE, (_, lead) => `${lead}${PHONE_PLACEHOLDER}`);
+}
+function maskPii(text) {
+  return maskContact(maskSecrets(text));
+}
+var USERREF_DIGEST_VERSION = "1";
+function userRefHashKey() {
+  return process.env.M8T_LEDGER_USERREF_KEY ?? (process.env.STORAGE_ACCOUNT_NAME ? `m8t-ledger-userref:${process.env.STORAGE_ACCOUNT_NAME}` : "m8t-agent-ledger-userref-dev");
+}
+function maskUserRef(ref) {
+  if (ref == null) return void 0;
+  return ref.replace(
+    EMAIL_RE,
+    (m) => `email#${USERREF_DIGEST_VERSION}:${createHmac6("sha256", userRefHashKey()).update(m.toLowerCase()).digest("hex").slice(0, 32)}`
+  );
+}
+
 // ../../../packages/agent-ledger/src/entity.ts
+function contactMaskingEnabled() {
+  return process.env.M8T_LEDGER_CONTACT_MASKING !== "off";
+}
 var SNIPPET_MAX_LEN = 256;
+var PII_SCAN_WINDOW = SNIPPET_MAX_LEN * 16;
 function truncateSnippet(text) {
   if (text == null) return void 0;
   const oneLine = text.replace(/\s+/g, " ").trim();
   if (oneLine.length === 0) return void 0;
   return oneLine.length <= SNIPPET_MAX_LEN ? oneLine : oneLine.slice(0, SNIPPET_MAX_LEN) + "\u2026";
+}
+function sanitizeSnippet(text) {
+  if (text == null) return void 0;
+  const oneLine = text.replace(/\s+/g, " ").trim();
+  let windowed = oneLine.slice(0, PII_SCAN_WINDOW);
+  if (oneLine.length > PII_SCAN_WINDOW) windowed = windowed.replace(/\S+$/, "");
+  const masked = contactMaskingEnabled() ? maskPii(windowed) : maskSecrets(windowed);
+  return truncateSnippet(masked);
 }
 function toLedgerEntity(e) {
   const entity = {
@@ -114255,12 +114353,15 @@ function toLedgerEntity(e) {
   };
   const optional2 = {
     channel: e.channel,
-    userRef: e.userRef,
+    // Persisted pseudonymized: email-shaped refs become stable digests here so
+    // no producer can write a raw UPN/email (pii.ts has the full policy;
+    // self-hosted operators can opt out — see contactMaskingEnabled).
+    userRef: contactMaskingEnabled() ? maskUserRef(e.userRef) : e.userRef,
     foundryConversationId: e.foundryConversationId,
     responseId: e.responseId,
     model: e.model,
-    inputSnippet: truncateSnippet(e.inputSnippet),
-    replySnippet: truncateSnippet(e.replySnippet),
+    inputSnippet: sanitizeSnippet(e.inputSnippet),
+    replySnippet: sanitizeSnippet(e.replySnippet),
     latencyMs: e.latencyMs,
     errorCode: e.errorCode,
     agentKind: e.agentKind,
@@ -114268,10 +114369,18 @@ function toLedgerEntity(e) {
     delegationId: e.delegationId,
     parentEventId: e.parentEventId,
     depth: e.depth,
-    pendingItem: e.pendingItem,
+    pendingItem: sanitizeSnippet(e.pendingItem),
     // Table Storage cells are scalar → serialize the pointer array to a JSON string
     // (the read side JSON.parses it). Same physical-mapping rationale as eventTimestamp.
-    artifacts: e.artifacts?.length ? JSON.stringify(e.artifacts) : void 0
+    // Paths and MIME strings are model-chosen free text, so they go through the
+    // masker too — ordinary artifact paths are untouched (path charset never
+    // matches a rule), but a filename embedding an address or key cannot land raw.
+    artifacts: e.artifacts?.length ? JSON.stringify(
+      e.artifacts.map((a) => ({
+        path: maskPii(a.path),
+        mime: a.mime === void 0 ? void 0 : maskPii(a.mime)
+      }))
+    ) : void 0
   };
   for (const [k, v] of Object.entries(optional2)) {
     if (v !== void 0 && v !== null) entity[k] = v;
