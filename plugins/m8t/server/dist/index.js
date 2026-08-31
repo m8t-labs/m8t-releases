@@ -20082,7 +20082,7 @@ var require_state_cjs2 = __commonJS({
 // src/index.ts
 import os10 from "os";
 import path13 from "path";
-import { createHash as createHash6 } from "crypto";
+import { createHash as createHash7 } from "crypto";
 
 // src/dns-shim.ts
 import dns from "dns";
@@ -114263,7 +114263,7 @@ function makeRowKey(timestampIso, eventId) {
 }
 
 // ../../../packages/agent-ledger/src/pii.ts
-import { createHmac as createHmac6 } from "crypto";
+import { createHash as createHash6, createHmac as createHmac6 } from "crypto";
 var EMAIL_PLACEHOLDER = "[email]";
 var PHONE_PLACEHOLDER = "[phone]";
 var SECRET_PLACEHOLDER = "[secret]";
@@ -114281,8 +114281,101 @@ var KEYED_WEAK_SECRET_RE = new RegExp(
   "gi"
 );
 var TELEGRAM_BOT_TOKEN_RE = /(?<!\d)\d{8,10}:AA[A-Za-z0-9_-]{32,34}(?![A-Za-z0-9_-])/g;
-var SPOKEN_SECRET_RE = /\b((?:password|passcode|passphrase|api[ _-]?key|access code|pin(?: code)?)\s+is[ \t:]+)(?=\S{0,32}[0-9])\S{4,64}/gi;
-var SPOKEN_PASSWORD_RE = /\b((?:password|passcode|passphrase)\s+is[ \t:]+)(?!\[)(?!(?:wrong|incorrect|invalid|expired|required|missing|reset|unchanged|correct|secure|weak|strong|blank|empty|not|now|still|too|the|already|also|only|just|being|getting)\b)("[^"\n]{4,64}"|'[^'\n]{4,64}'|\S{4,64})/gi;
+var SPOKEN_SECRET_RE = /\b((?:password|passcode|passphrase|api[ _-]?key|access code|pin(?: code)?)\s+is[ \t:]+)(?!\[)("[^"\n]{4,64}"|'[^'\n]{4,64}'|\S{4,64})/gi;
+var SENTENCE_TAIL_RE = /[.,;:]+$/;
+var PROSE_TRIM_RE = /^[*_~`"']+|[*_~`"'.,;:!?]+$/g;
+var PASSWORD_STATE_WORDS = /* @__PURE__ */ new Set([
+  "wrong",
+  "incorrect",
+  "invalid",
+  "expired",
+  "expiring",
+  "required",
+  "missing",
+  "reset",
+  "unchanged",
+  "correct",
+  "secure",
+  "insecure",
+  "weak",
+  "strong",
+  "blank",
+  "empty",
+  "gone",
+  "lost",
+  "forgotten",
+  "compromised",
+  "leaked",
+  "breached",
+  "outdated",
+  "stale",
+  "old",
+  "new",
+  "different",
+  "same",
+  "shared",
+  "saved",
+  "stored",
+  "cached",
+  "rotated",
+  "rotating",
+  "updated",
+  "changed",
+  "changing",
+  "disabled",
+  "enabled",
+  "locked",
+  "unlocked",
+  "temporary",
+  "permanent",
+  "unrecoverable",
+  "case-sensitive",
+  "sensitive",
+  "hashed",
+  "encrypted",
+  "written",
+  "personal",
+  "everywhere",
+  "fine",
+  "ok",
+  "okay",
+  "good",
+  "bad",
+  "ready",
+  "set",
+  "unset",
+  "pending",
+  "working",
+  "broken",
+  "failing",
+  "failed",
+  "accepted",
+  "rejected",
+  "not",
+  "now",
+  "still",
+  "also",
+  "only",
+  "just",
+  "being",
+  "getting",
+  "always",
+  "never",
+  "already",
+  "again",
+  "here",
+  "there",
+  "this",
+  "that"
+]);
+function readsAsPasswordState(value) {
+  if (/^["']/.test(value)) return false;
+  return PASSWORD_STATE_WORDS.has(value.replace(PROSE_TRIM_RE, "").toLowerCase());
+}
+function maskSpokenValue(lead, value) {
+  const tail = SENTENCE_TAIL_RE.exec(value)?.[0] ?? "";
+  return `${lead}${SECRET_PLACEHOLDER}${tail}`;
+}
 var B64ISH_RE = /(?<![A-Za-z0-9+=_-])(?=[A-Za-z0-9+=_-]{0,64}[A-Z])(?=[A-Za-z0-9+=_-]{0,64}[a-z])(?=[A-Za-z0-9+=_-]{0,64}[0-9])[A-Za-z0-9+=_-]{40,}(?![A-Za-z0-9+=_-])/g;
 var EMAIL_RE = new RegExp("[\\p{L}\\p{N}._%+-]+@[\\p{L}\\p{N}](?:[\\p{L}\\p{N}.-]*[\\p{L}\\p{N}])?\\.\\p{L}{2,}(?![\\p{L}\\p{N}-])", "gu");
 var PHONE_INTL_RE = /(?<![\d/.-])\+\d{1,3}(?:[ .-]?\(\d{1,4}\))?(?:[ .-]?\d){6,12}(?!\d)/g;
@@ -114300,7 +114393,7 @@ function failClosedOnCutConstructs(text) {
   return text;
 }
 function maskSecrets(text) {
-  const masked = text.replace(PEM_BLOCK_RE, SECRET_PLACEHOLDER).replace(JWT_RE, SECRET_PLACEHOLDER).replace(HTTP_CREDENTIAL_RE, (_, scheme) => `${scheme} ${SECRET_PLACEHOLDER}`).replace(KNOWN_PREFIX_RE, SECRET_PLACEHOLDER).replace(TELEGRAM_BOT_TOKEN_RE, SECRET_PLACEHOLDER).replace(KEYED_STRONG_SECRET_RE, (_, key2, sep3) => `${key2}${sep3}${SECRET_PLACEHOLDER}`).replace(KEYED_WEAK_SECRET_RE, (_, key2, sep3) => `${key2}${sep3}${SECRET_PLACEHOLDER}`).replace(SPOKEN_SECRET_RE, (_, lead) => `${lead}${SECRET_PLACEHOLDER}`).replace(SPOKEN_PASSWORD_RE, (_, lead) => `${lead}${SECRET_PLACEHOLDER}`).replace(B64ISH_RE, SECRET_PLACEHOLDER);
+  const masked = text.replace(PEM_BLOCK_RE, SECRET_PLACEHOLDER).replace(JWT_RE, SECRET_PLACEHOLDER).replace(HTTP_CREDENTIAL_RE, (_, scheme) => `${scheme} ${SECRET_PLACEHOLDER}`).replace(KNOWN_PREFIX_RE, SECRET_PLACEHOLDER).replace(TELEGRAM_BOT_TOKEN_RE, SECRET_PLACEHOLDER).replace(KEYED_STRONG_SECRET_RE, (_, key2, sep3) => `${key2}${sep3}${SECRET_PLACEHOLDER}`).replace(KEYED_WEAK_SECRET_RE, (_, key2, sep3) => `${key2}${sep3}${SECRET_PLACEHOLDER}`).replace(SPOKEN_SECRET_RE, (whole, lead, value) => readsAsPasswordState(value) ? whole : maskSpokenValue(lead, value)).replace(B64ISH_RE, SECRET_PLACEHOLDER);
   return failClosedOnCutConstructs(masked);
 }
 function maskContact(text) {
@@ -114313,12 +114406,28 @@ var USERREF_DIGEST_VERSION = "1";
 function userRefHashKey() {
   return process.env.M8T_LEDGER_USERREF_KEY ?? (process.env.STORAGE_ACCOUNT_NAME ? `m8t-ledger-userref:${process.env.STORAGE_ACCOUNT_NAME}` : "m8t-agent-ledger-userref-dev");
 }
+function digestSegment(kind, value) {
+  const hex = createHmac6("sha256", userRefHashKey()).update(value).digest("hex").slice(0, 32);
+  return `${kind}#${USERREF_DIGEST_VERSION}:${hex}`;
+}
+var DELEGATED_REF_RE = /^(svc:[^:]*:)(.+)$/;
+var DIGESTED_SEGMENT_RE = /^(?:email|key)#\d+:/;
 function maskUserRef(ref) {
   if (ref == null) return void 0;
-  return ref.replace(
-    EMAIL_RE,
-    (m) => `email#${USERREF_DIGEST_VERSION}:${createHmac6("sha256", userRefHashKey()).update(m.toLowerCase()).digest("hex").slice(0, 32)}`
-  );
+  const withEmailsDigested = ref.replace(EMAIL_RE, (m) => digestSegment("email", m.toLowerCase()));
+  return maskDelegatedKey(withEmailsDigested);
+}
+function maskDelegatedKey(ref) {
+  if (ref == null) return void 0;
+  const delegated = DELEGATED_REF_RE.exec(ref);
+  if (!delegated) return ref;
+  const [, prefix2, key2] = delegated;
+  if (DIGESTED_SEGMENT_RE.test(key2)) return ref;
+  return `${prefix2}${digestSegment("key", key2)}`;
+}
+function delegatedOwnerDigest(ref) {
+  if (!ref?.startsWith("svc:")) return void 0;
+  return createHash6("sha256").update(ref).digest("base64url");
 }
 
 // ../../../packages/agent-ledger/src/entity.ts
@@ -114353,10 +114462,19 @@ function toLedgerEntity(e) {
   };
   const optional2 = {
     channel: e.channel,
-    // Persisted pseudonymized: email-shaped refs become stable digests here so
-    // no producer can write a raw UPN/email (pii.ts has the full policy;
-    // self-hosted operators can opt out — see contactMaskingEnabled).
-    userRef: contactMaskingEnabled() ? maskUserRef(e.userRef) : e.userRef,
+    // Persisted pseudonymized: email-shaped refs and a delegated end-user key
+    // become stable digests here so no producer can write a raw UPN/email or a
+    // caller-asserted key (pii.ts has the full policy; self-hosted operators
+    // can opt out — see contactMaskingEnabled).
+    // The delegated end-user key is digested EITHER WAY: it is a live session
+    // credential, and the contact opt-out covers an operator's own team's
+    // contact info, not someone else's bearer token.
+    userRef: contactMaskingEnabled() ? maskUserRef(e.userRef) : maskDelegatedKey(e.userRef),
+    // The delegated owner's conversation-registry digest — written for `svc:`
+    // refs only, and written whatever the masking policy says, because it is
+    // what lets retention bind this row to the conversation the visitor owns
+    // once the ref beside it is a pseudonym. See delegatedOwnerDigest.
+    ownerDigest: delegatedOwnerDigest(e.userRef),
     foundryConversationId: e.foundryConversationId,
     responseId: e.responseId,
     model: e.model,
@@ -114476,7 +114594,7 @@ async function initWorkerInfrastructure() {
   });
   const registry2 = createInFlightRegistry();
   logger36.info("m8t MCP infrastructure initialized", {
-    installationHash: createHash6("sha256").update(projectEndpoint).digest("hex"),
+    installationHash: createHash7("sha256").update(projectEndpoint).digest("hex"),
     pollIntervalSeconds: config2.pollIntervalSeconds,
     responseWaitBudgetSeconds: config2.responseWaitBudgetSeconds
   });
